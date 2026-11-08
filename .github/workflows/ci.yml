@@ -1,0 +1,30 @@
+# Continuous integration: on every push and pull request, install the project
+# exactly as pinned in uv.lock, then run the linter, formatter check and tests.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install Python and dependencies
+        run: uv sync --locked  # fails if uv.lock is out of date with pyproject.toml
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Run tests
+        run: uv run pytest
