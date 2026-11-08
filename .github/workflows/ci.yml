@@ -18,7 +18,7 @@ jobs:
           enable-cache: true
 
       - name: Install Python and dependencies
-        run: uv sync --locked  # fails if uv.lock is out of date with pyproject.toml
+        run: uv sync --locked --no-group notebooks  # fails if uv.lock is out of date with pyproject.toml
 
       - name: Lint
         run: uv run ruff check .
