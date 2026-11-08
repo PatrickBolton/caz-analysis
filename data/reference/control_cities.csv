@@ -1,0 +1,19 @@
+city_id,city,country,include,role,approx_centre_lat,approx_centre_lon,exclusion_reason,notes,source_url
+leeds,Leeds,England,true,never_charged,53.7965,-1.5478,,"Class B CAZ planned, dropped Oct 2020 after fleets upgraded early (>90% Euro VI buses). Anticipatory upgrades 2019-20 fall in our pre-period: check pre-trends. Centre is ~13 km from Bradford: do NOT use as a donor for Bradford.",https://www.transportxtra.com/publications/local-transport-today/news/67183/leeds-caz-scrapped-as-fleet-upgrades-deliver-compliance
+manchester,Manchester,England,true,never_charged,53.4794,-2.2453,,"Greater Manchester charging CAZ paused 2022; non-charging investment-led plan approved by government 23 Jan 2025 (bus and taxi upgrades). Bus franchising (Bee Network) from 2023 (verify dates). Concurrent bus-fleet changes: flag in sensitivity checks.",https://www.gov.uk/government/news/government-backs-local-plans-for-clean-air-in-greater-manchester--2
+leicester,Leicester,England,true,never_charged,52.6344,-1.1316,,"Bus/taxi charging CAZ proposal scrapped 2021 as air quality improved (verify exact date).",https://www.route-one.net/news/plans-for-leicester-clean-air-zone-scrapped-after-air-quality-improves/
+liverpool,Liverpool,England,true,never_charged,53.4075,-2.9919,,"Council rejected a charging CAZ in 2022; non-charging clean air plan instead (verify dates and measures).",https://airqualitynews.com/local-government/liverpools-clean-air-u-turn-risks-lives-leading-charity-says/
+southampton,Southampton,England,true,never_charged,50.9040,-1.4040,,"Charging CAZ for HGVs dropped 2019 in favour of non-charging measures (verify). About 25 km from Portsmouth: possible shared fleets/spillover.",https://transportoperator.co.uk/?p=15212
+nottingham,Nottingham,England,true,control,52.9536,-1.1505,,"Non-charging air quality plan approved by government Nov 2018 (bus retrofits, taxi measures). Workplace Parking Levy since 2012 (stable over study period).",https://www.fleetnews.co.uk/news/environment/2018/11/23/government-approves-nottingham-s-air-quality-plan
+derby,Derby,England,true,control,52.9225,-1.4746,,Non-charging measures instead of a CAZ (verify details).,
+coventry,Coventry,England,true,control,52.4081,-1.5106,,"About 30 km from Birmingham: some fleet overlap with Birmingham CAZ possible (spillover). Non-charging local NO2 plan (verify).",
+stoke,Stoke-on-Trent,England,true,control,53.0250,-2.1770,,Non-charging local NO2 plan (verify). Centre taken as Hanley.,
+hull,Kingston upon Hull,England,true,control,53.7446,-0.3352,,No major traffic-emission policy known in 2016-2025 (verify).,
+plymouth,Plymouth,England,true,control,50.3714,-4.1422,,No major traffic-emission policy known in 2016-2025 (verify).,
+wolverhampton,Wolverhampton,England,true,control,52.5862,-2.1288,,"About 20 km from Birmingham: shared West Midlands bus/van fleets likely upgraded for Birmingham CAZ (spillover risk). Consider dropping in sensitivity checks.",
+london,London,England,false,excluded,51.5074,-0.1278,ULEZ (2019) and expansions 2021 and 2023,,
+oxford,Oxford,England,false,excluded,51.7520,-1.2577,Zero Emission Zone pilot from Feb 2022,,
+york,York,England,false,excluded,53.9590,-1.0815,Bus-only Clean Air Zone from Jan 2020 (fully enforced Jan 2021),,https://www.local.gov.uk/case-studies/city-york-caz
+cardiff,Cardiff,Wales,false,excluded,51.4816,-3.1791,Wales default 20mph limit from Sep 2023,,
+swansea,Swansea,Wales,false,excluded,51.6214,-3.9436,Wales default 20mph limit from Sep 2023,,
+newport,Newport,Wales,false,excluded,51.5842,-2.9977,Wales default 20mph limit from Sep 2023,,
