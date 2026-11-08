@@ -41,8 +41,9 @@ def parse_date(value: str) -> dt.date:
 def test_zone_columns() -> None:
     expected = [
         "zone_id", "city", "country", "scheme_type", "class", "charging_start",
-        "announced_date", "includes_private_cars", "approx_centre_lat",
-        "approx_centre_lon", "source_url", "notes",
+        "decision_date", "start_date_announced", "includes_private_cars",
+        "approx_centre_lat", "approx_centre_lon", "source_url", "decision_source_url",
+        "notes",
     ]  # fmt: skip
     assert list(ZONES[0].keys()) == expected
 
@@ -55,9 +56,11 @@ def test_ids_unique(rows: list[dict[str, str]], id_col: str) -> None:
 
 @pytest.mark.parametrize("zone", ZONES, ids=lambda z: z["zone_id"])
 def test_zone_row_valid(zone: dict[str, str]) -> None:
+    decided = parse_date(zone["decision_date"])
+    announced = parse_date(zone["start_date_announced"])
     charging = parse_date(zone["charging_start"])
-    announced = parse_date(zone["announced_date"])
-    assert announced < charging
+    # The council decides on a zone, then the start date is announced, then charging begins.
+    assert decided <= announced < charging
     assert dt.date(2018, 1, 1) <= charging <= dt.date.today()
     assert zone["country"] in {"England", "Scotland"}
     assert zone["scheme_type"] in {"charging_caz", "lez"}
@@ -66,6 +69,7 @@ def test_zone_row_valid(zone: dict[str, str]) -> None:
     # Class D and Scottish LEZs cover private cars; Classes B and C do not.
     assert (zone["includes_private_cars"] == "true") == (zone["class"] in {"D", "LEZ"})
     assert zone["source_url"].startswith("https://")
+    assert zone["decision_source_url"].startswith("https://")
 
 
 @pytest.mark.parametrize("row", ZONES + CONTROLS, ids=lambda r: r.get("zone_id") or r["city_id"])
