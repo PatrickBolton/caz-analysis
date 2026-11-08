@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/raw/
+data/processed/
+.ipynb_checkpoints/
+.DS_Store
+# data/bundle/ is committed (small results files used by the public app)
+
+# Planning and assistant notes stay local (not published)
+*.md
+!README.md
