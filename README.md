@@ -23,4 +23,4 @@ Open data (DEFRA air quality, council zone boundaries, DfT traffic counts) → P
 Details: [`docs/METHODS.md`](docs/METHODS.md) · Data: [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) · Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 
 ## Data licences
-Air quality data © Crown copyright (DEFRA), Open Government Licence v3.0. Road traffic data © DfT, OGL v3.0. Zone boundaries from council open-data portals (OGL). Full attribution in `docs/DATA_SOURCES.md`.
+Air quality data © Crown copyright (DEFRA), Open Government Licence v3.0. Road traffic data © DfT, OGL v3.0. Zone boundaries from council open-data portals (Sheffield: OGL) and from OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0; `data/reference/zone_boundaries.geojson` is available under the ODbL). Full attribution in `docs/DATA_SOURCES.md`.

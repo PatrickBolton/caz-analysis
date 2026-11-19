@@ -11,6 +11,7 @@ dependencies = [
     "pandas>=3.1.1",
     "rdata>=1.1.0",
     "requests>=2.34.2",
+    "shapely>=2.2.0",
 ]
 
 [build-system]
@@ -24,7 +25,9 @@ dev = [
     "ruff>=0.17.4",
 ]
 notebooks = [
+    "folium>=0.20.0",
     "jupyterlab>=4.6.6",
+    "matplotlib>=3.11.2",
 ]
 
 [tool.ruff]

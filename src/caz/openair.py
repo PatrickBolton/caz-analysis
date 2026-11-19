@@ -19,7 +19,8 @@ import rdata
 import requests
 
 TIMEOUT_S = 60
-DATE_FORMAT = "%Y-%m-%d"  # dates in metadata files; anything else ("ongoing", blank) -> NaT
+DATE_FORMAT = "%Y-%m-%d"  # dates in metadata files
+OPEN_END_VALUES = {"ongoing", ""}  # end_date values meaning "still running"
 
 # Older R files do not declare a text encoding; rdata then assumes ASCII and warns.
 warnings.filterwarnings("ignore", message="Unknown encoding. Assumed ASCII.")
@@ -49,6 +50,10 @@ NETWORKS: dict[str, Network] = {
 
 class DownloadError(RuntimeError):
     """A file could not be downloaded or is not a valid R data file."""
+
+
+class MetadataFormatError(ValueError):
+    """A metadata file contains values in a format this code does not understand."""
 
 
 def metadata_url(network: Network) -> str:
@@ -104,12 +109,30 @@ def normalise_metadata(raw: pd.DataFrame, network_name: str) -> pd.DataFrame:
             "latitude": pd.to_numeric(raw["latitude"], errors="coerce"),
             "longitude": pd.to_numeric(raw["longitude"], errors="coerce"),
             "parameter": raw["parameter"].astype(str),
+            "start_date": parse_dates(raw["start_date"], allow_open=False),
             # "ongoing" and blanks become NaT (= still running)
-            "start_date": pd.to_datetime(raw["start_date"], format=DATE_FORMAT, errors="coerce"),
-            "end_date": pd.to_datetime(raw["end_date"], format=DATE_FORMAT, errors="coerce"),
+            "end_date": parse_dates(raw["end_date"], allow_open=True),
         }
     )
     return df.dropna(subset=["latitude", "longitude"]).reset_index(drop=True)
+
+
+def parse_dates(values: pd.Series, allow_open: bool) -> pd.Series:
+    """Parse YYYY-MM-DD dates strictly.
+
+    With allow_open, "ongoing" and blanks become NaT (= still running). Anything
+    else that does not parse raises MetadataFormatError, so a change of date
+    format in a network's files cannot silently make closed sites look open.
+    """
+    text = values.astype("string").str.strip()
+    is_open = text.isna() | text.str.lower().isin(OPEN_END_VALUES)
+    parsed = pd.to_datetime(text.where(~is_open), format=DATE_FORMAT, errors="coerce")
+    bad = parsed.isna() & ~is_open
+    if bad.any():
+        raise MetadataFormatError(f"unrecognised dates: {sorted(set(text[bad]))[:5]}")
+    if is_open.any() and not allow_open:
+        raise MetadataFormatError(f"{int(is_open.sum())} missing or open-ended start dates")
+    return parsed
 
 
 def read_annual_summary(path: Path, network_name: str, pollutant: str = "NO2") -> pd.DataFrame:
