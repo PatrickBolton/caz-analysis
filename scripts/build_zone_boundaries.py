@@ -4,13 +4,14 @@ Run from the project root:
     uv run python scripts/build_zone_boundaries.py            # uses cached downloads
     uv run python scripts/build_zone_boundaries.py --refresh  # re-download
 
-Sources (see docs/DECISIONS.md, 2026-11-09):
-- the council's own published boundary where one could be found (Birmingham,
-  Bradford, Sheffield);
+Sources (see docs/DECISIONS.md, 2026-11-09 and 2026-11-19):
+- the council's own published boundary where one could be found: GIS files for
+  Birmingham, Bradford and Sheffield; for Portsmouth, the polygon behind the
+  official map on the council's Cleaner Air Portsmouth website (served by the
+  WP Google Maps plugin's public REST API);
 - otherwise OpenStreetMap (ODbL), via the OSM editing API (an element and all
   its parts). OSM is cross-checked against the official file where both exist,
   and the result is printed.
-Portsmouth has no published or mapped boundary, so it is left out.
 """
 
 import argparse
@@ -28,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw" / "boundaries"
 OUT = ROOT / "data" / "reference" / "zone_boundaries.geojson"
 OSM_API = "https://api.openstreetmap.org/api/0.6"
-HEADERS = {"User-Agent": "caz-analysis (research project; github.com/PatrickBolton)"}
+HEADERS = {"User-Agent": "caz-analysis/0.1 (+https://github.com/PatrickBolton)"}
 OSM_LICENCE = "ODbL 1.0, (c) OpenStreetMap contributors"
 
 
@@ -47,6 +48,17 @@ def osm(element: str, osm_id: int) -> dict:
     }
 
 
+def wp_map(url: str, page: str, polygon_name: str) -> dict:
+    """A polygon drawn on a WordPress map (WP Google Maps plugin), found by its name."""
+    return {
+        "kind": "wp_map",
+        "url": url,
+        "polygon_name": polygon_name,
+        "licence": "not stated",
+        "source_page": page,
+    }
+
+
 ARCGIS_QUERY = "/query?where=1%3D1&outFields=*&outSR=4326&f=geojson"
 SOURCES = {
     "bath": osm("way", 1146120795),
@@ -62,6 +74,11 @@ SOURCES = {
         "Clean_Air_Zone_Boundary/MapServer/0" + ARCGIS_QUERY,
         "not stated",
         "https://www.data.gov.uk/dataset/7235c856-557d-4def-9b7f-02cc86260149/clean-air-zone-boundary",
+    ),
+    "portsmouth": wp_map(
+        "https://cleanerairportsmouth.co.uk/wp-json/wpgmza/v1/polygons",
+        "https://cleanerairportsmouth.co.uk/clean-air-zone-map/",
+        "Portsmouth Clean Air Zone",
     ),
     "bristol": osm("relation", 15479588),
     "tyneside": osm("way", 1338896773),
@@ -100,6 +117,13 @@ def build(name: str, source: dict, refresh: bool) -> BaseGeometry:
         if not parts:
             raise ValueError(f"{name}: no features returned")
         return unary_union(parts)
+    if source["kind"] == "wp_map":
+        polygons = fetch_json(name, refresh, url=source["url"])["polygons"]
+        (polygon,) = [p for p in polygons if p["polyname"] == source["polygon_name"]]
+        if polygon["innerpolydata"]:
+            raise ValueError(f"{name}: polygon has holes, which this code does not read")
+        ring = [(float(p["lng"]), float(p["lat"])) for p in polygon["polydata"]]
+        return clean_geometry({"type": "Polygon", "coordinates": [ring + ring[:1]]})
     url = f"{OSM_API}/{source['element']}/{source['osm_id']}/full.json"
     elements = fetch_json(name, refresh, url=url)["elements"]
     nodes = {e["id"]: (e["lon"], e["lat"]) for e in elements if e["type"] == "node"}
@@ -125,16 +149,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--refresh", action="store_true", help="re-download cached files")
     args = parser.parse_args()
-    retrieved = dt.date.today().isoformat()
 
     features = []
     for zone_id, source in SOURCES.items():
-        geometry = build(f"{zone_id}_{source['kind']}", source, args.refresh)
+        name = f"{zone_id}_{source['kind']}"
+        geometry = build(name, source, args.refresh)
+        # date the cached download was made, not today's date
+        retrieved = dt.date.fromtimestamp((RAW / f"{name}.json").stat().st_mtime).isoformat()
         features.append(
             {
                 "geometry": geometry,
                 "zone_id": zone_id,
-                "source": "council" if source["kind"] == "arcgis" else "openstreetmap",
+                "source": "openstreetmap" if source["kind"] == "osm" else "council",
                 "source_url": source["source_page"],
                 "licence": source["licence"],
                 "retrieved": retrieved,

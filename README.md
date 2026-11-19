@@ -4,7 +4,7 @@
 
 Since 2021, seven English cities have introduced charging Clean Air Zones (CAZs) at different dates and with different strictness (Class B, C, D), and four Scottish cities have introduced Low Emission Zones. Existing evaluations look at one city at a time, each with its own method and usually only one year of data after launch, so their results cannot be compared. This project estimates all eleven zones with one pipeline, and turns the results into a decision tool for cities still considering a zone.
 
-> Status: Phase 0 (setup and feasibility check).
+> Status: Phase 0 (setup and feasibility check) complete; nine zones have a usable monitor inside the zone and go forward. Next: Phase 1 (data foundation).
 
 ## Questions
 1. How much did each zone reduce NO2, after removing the effects of weather and national trends?

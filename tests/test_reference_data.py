@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from caz.boundaries import read_boundaries
 from caz.geo import haversine_km
 
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "data" / "reference"
@@ -43,9 +44,22 @@ def test_zone_columns() -> None:
         "zone_id", "city", "country", "scheme_type", "class", "charging_start",
         "decision_date", "start_date_announced", "includes_private_cars",
         "approx_centre_lat", "approx_centre_lon", "source_url", "decision_source_url",
-        "notes",
+        "include", "exclusion_reason", "notes",
     ]  # fmt: skip
     assert list(ZONES[0].keys()) == expected
+
+
+@pytest.mark.parametrize("zone", ZONES, ids=lambda z: z["zone_id"])
+def test_excluded_zones_give_a_reason(zone: dict[str, str]) -> None:
+    assert zone["include"] in {"true", "false"}
+    assert bool(zone["exclusion_reason"]) == (zone["include"] == "false")
+
+
+def test_every_included_zone_has_a_boundary() -> None:
+    # Phase 1 labels sites inside / edge / outside from these polygons.
+    boundaries = read_boundaries(REFERENCE_DIR / "zone_boundaries.geojson")
+    included = {z["zone_id"] for z in ZONES if z["include"] == "true"}
+    assert included <= set(boundaries)
 
 
 @pytest.mark.parametrize("rows,id_col", [(ZONES, "zone_id"), (CONTROLS, "city_id")])
