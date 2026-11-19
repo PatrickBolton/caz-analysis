@@ -22,5 +22,17 @@ Open data (DEFRA air quality, council zone boundaries, DfT traffic counts) → P
 
 Details: [`docs/METHODS.md`](docs/METHODS.md) · Data: [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) · Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
 
+## Running locally
+Needs [uv](https://docs.astral.sh/uv/) and Docker.
+
+```bash
+uv sync                                   # Python 3.12 and dependencies, as pinned in uv.lock
+uv run pytest                             # tests
+cp .env.example .env                      # then set POSTGRES_PASSWORD in .env
+docker compose up -d --wait               # Postgres 18 + PostGIS + pgvector on localhost:5432
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < docker/db/check.sql
+docker compose down                       # stop (data is kept in a Docker volume; add -v to delete it)
+```
+
 ## Data licences
 Air quality data © Crown copyright (DEFRA), Open Government Licence v3.0. Road traffic data © DfT, OGL v3.0. Zone boundaries from council open-data portals (Sheffield: OGL) and from OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0; `data/reference/zone_boundaries.geojson` is available under the ODbL). Full attribution in `docs/DATA_SOURCES.md`.

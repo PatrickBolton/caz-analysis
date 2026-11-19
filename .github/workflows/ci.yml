@@ -28,3 +28,23 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  database:
+    # Build the Postgres + PostGIS + pgvector image and check the extensions work,
+    # using the same compose.yaml and smoke test as on the developer's Mac.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create .env from the example (throwaway password; CI only)
+        run: cp .env.example .env
+
+      - name: Build and start the database
+        run: docker compose up -d --build --wait
+
+      - name: Check extensions
+        run: docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < docker/db/check.sql
+
+      - name: Stop the database
+        if: always()
+        run: docker compose down -v

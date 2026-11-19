@@ -1,0 +1,22 @@
+# Local services for development. Start with:  docker compose up -d --wait
+# Settings come from .env (copy .env.example to .env first).
+services:
+  db:
+    build: docker/db
+    image: caz-db:local
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"  # reachable from this Mac only
+    volumes:
+      - pgdata:/var/lib/postgresql  # data survives container restarts and rebuilds
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:
