@@ -22,6 +22,7 @@ Written here rather than imported: the R package augsynth (used by Liu et al.
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 from scipy.optimize import minimize
 
 N_CV_PERIODS = 5  # last pre-treatment periods used to choose lambda
@@ -156,3 +157,43 @@ def average_effect(result: SynthResult, y1: np.ndarray, window: np.ndarray, alph
         percent_lower=100 * lower / base,
         percent_upper=100 * upper / base,
     )
+
+
+def fill_donor_gaps(
+    panel: pd.DataFrame, max_gap: int = 4, max_edge_gap: int = 1
+) -> tuple[pd.DataFrame, list[str]]:
+    """Fill short gaps in donor series (periods x donors); drop donors with longer ones.
+
+    Interior gaps of at most `max_gap` periods are filled by linear interpolation;
+    a gap at the start or end of at most `max_edge_gap` periods takes the nearest
+    value. A donor with any longer gap is dropped (not partly filled). Returns
+    (filled panel of the kept donors, names of dropped donors).
+    """
+    kept, dropped = {}, []
+    for name, series in panel.items():
+        missing = series.isna().to_numpy()
+        runs = _missing_runs(missing)
+        n = len(series)
+        too_long = any(
+            (length > max_edge_gap) if (start == 0 or start + length == n) else (length > max_gap)
+            for start, length in runs
+        )
+        if too_long or missing.all():
+            dropped.append(name)
+            continue
+        kept[name] = series.interpolate(limit_area="inside").ffill().bfill()
+    return pd.DataFrame(kept, index=panel.index), dropped
+
+
+def _missing_runs(missing: np.ndarray) -> list[tuple[int, int]]:
+    """(start, length) of each run of True values."""
+    runs, start = [], None
+    for i, m in enumerate(missing):
+        if m and start is None:
+            start = i
+        elif not m and start is not None:
+            runs.append((start, i - start))
+            start = None
+    if start is not None:
+        runs.append((start, len(missing) - start))
+    return runs

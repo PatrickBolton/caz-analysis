@@ -1,6 +1,7 @@
 """Ridge-augmented synthetic control: simulation tests with a known effect."""
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from caz import synth
@@ -92,3 +93,18 @@ def test_missing_values_are_refused() -> None:
     y0[2, 5] = np.nan
     with pytest.raises(ValueError, match="missing"):
         synth.fit(y1, y0, T0)
+
+
+def test_short_donor_gaps_are_filled_and_long_ones_drop_the_donor() -> None:
+    nan = float("nan")
+    panel = pd.DataFrame({
+        "short": [1, nan, nan, 4, 5, 6],  # interior gap of 2: interpolated
+        "edge": [nan, 2, 3, 4, 5, 6],  # first value missing: takes the next
+        "long": [1, nan, nan, nan, nan, nan],  # trailing gap of 5: dropped
+        "long_inside": [1, nan, nan, nan, nan, 6],  # interior gap 4 > 3: dropped
+        "edge_two": [1, 2, 3, 4, nan, nan],  # trailing gap of 2 > 1: dropped
+    })  # fmt: skip
+    filled, dropped = synth.fill_donor_gaps(panel, max_gap=3, max_edge_gap=1)
+    assert filled["short"].tolist() == [1, 2, 3, 4, 5, 6]
+    assert filled["edge"].tolist() == [2, 2, 3, 4, 5, 6]
+    assert sorted(dropped) == ["edge_two", "long", "long_inside"]
