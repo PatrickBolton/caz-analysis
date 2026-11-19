@@ -9,9 +9,12 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "pandas>=3.1.1",
+    "pandera>=0.36.0",
+    "psycopg[binary]>=3.3.9",
     "rdata>=1.1.0",
     "requests>=2.34.2",
     "shapely>=2.2.0",
+    "sqlalchemy>=2.1.9",
 ]
 
 [build-system]
@@ -41,7 +44,10 @@ select = ["E", "W", "F", "I", "B", "UP", "N"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Database tests need the Postgres container; they are skipped by default.
+# Run them with:  uv run --env-file .env pytest -m db
+addopts = "-ra -m 'not db'"
+markers = ["db: needs the database container (docker compose up -d --wait)"]
 
 [tool.uv]
 # Plain `uv sync` installs both groups; CI skips the notebook group (--no-group notebooks).

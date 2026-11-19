@@ -30,8 +30,9 @@ jobs:
         run: uv run pytest
 
   database:
-    # Build the Postgres + PostGIS + pgvector image and check the extensions work,
-    # using the same compose.yaml and smoke test as on the developer's Mac.
+    # Build the Postgres + PostGIS + pgvector image, check the extensions work, then
+    # load the reference data and run the database tests (pytest -m db), using the
+    # same compose.yaml and commands as on the developer's Mac.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -44,6 +45,20 @@ jobs:
 
       - name: Check extensions
         run: docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < docker/db/check.sql
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install Python and dependencies
+        run: uv sync --locked --no-group notebooks
+
+      - name: Load reference data
+        run: uv run --env-file .env python scripts/load_reference.py
+
+      - name: Run database tests
+        run: uv run --env-file .env pytest -m db
 
       - name: Stop the database
         if: always()
