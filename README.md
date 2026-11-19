@@ -20,7 +20,20 @@ Since 2021, seven English cities have introduced charging Clean Air Zones (CAZs)
 ## Approach (summary)
 Open data (DEFRA air quality, council zone boundaries, DfT traffic counts) → Postgres/PostGIS → weather normalisation (ML) → staggered difference-in-differences and synthetic control → hierarchical Bayesian pooling across zones → scenario tool → dashboard with an AI assistant that only reports numbers produced by the model.
 
-Details: [`docs/METHODS.md`](docs/METHODS.md) · Data: [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) · Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
+## Methods in brief
+- **Data.** Hourly NO2, PM2.5 and modelled weather from the UK national and regional monitoring networks (openair files), loaded into PostGIS and checked against the networks' published annual statistics (exact match).
+  - Each monitor is labelled inside its zone, at the edge (within 1 km outside), or outside, using the official or OpenStreetMap zone boundary.
+  - Monitors listed in two networks are merged.
+  - Cleaning rules: hourly NO2 below -5 µg/m³ is treated as missing; a day needs 18 of 24 hours; a week needs 5 of 7 valid days.
+- **Weather normalisation.** Per monitor, a random forest predicts hourly NO2 from time and weather (ERA5 reanalysis). Repeating the prediction with the weather resampled gives NO2 "under average weather", so a windy month is not mistaken for a policy effect.
+- **Counterfactual.** Ridge-augmented synthetic control: a weighted mix of monitors in cities without a zone that tracks the treated monitor before the zone, giving what NO2 would have been without it.
+  - 95% intervals by jackknife+.
+  - Control cities must be at least 15 km from any zone and not treated during the study period.
+- **Checks before results.**
+  - Simulation tests with a known injected effect: in 100 runs the 95% intervals contained the true effect 93% of the time.
+  - The published Birmingham study, repeated with this pipeline.
+  - Placebo tests.
+- **Still to come:** staggered difference-in-differences across all zones, the effect by year since launch, anticipation (from the council's decision date), and Bayesian pooling of zones with few monitors.
 
 ## Running locally
 Needs [uv](https://docs.astral.sh/uv/) and Docker.
@@ -40,4 +53,4 @@ docker compose down                       # stop (data is kept in a Docker volum
 ```
 
 ## Data licences
-Air quality data © Crown copyright (DEFRA), Open Government Licence v3.0. Road traffic data © DfT, OGL v3.0. Weather: ERA5 (Copernicus Climate Change Service) via the Open-Meteo API (CC BY 4.0). Zone boundaries from council open-data portals and maps (Sheffield: OGL; Birmingham, Bradford, Portsmouth: no licence stated) and from OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0; `data/reference/zone_boundaries.geojson` is available under the ODbL). Full attribution in `docs/DATA_SOURCES.md`.
+Air quality data © Crown copyright (DEFRA), Open Government Licence v3.0. Road traffic data © DfT, OGL v3.0. Weather: ERA5 (Copernicus Climate Change Service) via the Open-Meteo API (CC BY 4.0). Zone boundaries from council open-data portals and maps (Sheffield: OGL; Birmingham, Bradford, Portsmouth: no licence stated) and from OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0; `data/reference/zone_boundaries.geojson` is available under the ODbL). Data from the openair files: cite openair (Carslaw & Ropkins, 2012).
