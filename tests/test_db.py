@@ -1,0 +1,184 @@
+"""Building the database (needs the database container).
+
+Run with:  uv run --env-file .env pytest -m db
+
+Uses a separate, throwaway database (caz_test) on the same server, so the
+development database is never touched. The monitoring sites are made up (a grid
+of points around every zone), so the tests need no downloads.
+"""
+
+from collections.abc import Iterator
+
+import numpy as np
+import pandas as pd
+import pytest
+import shapely
+import sqlalchemy.exc
+from sqlalchemy import Engine, text
+
+from caz import database
+from caz import reference as r
+from caz.boundaries import EDGE_M, locate, read_boundaries
+from caz.db import get_engine
+
+pytestmark = pytest.mark.db
+TEST_DB = "caz_test"
+BOUNDARIES = read_boundaries(r.REFERENCE_DIR / "zone_boundaries.geojson")
+VIEW_LIMIT_M = 5000  # aq.site_zone_location keeps sites within this of a boundary
+
+
+def grid_sites() -> pd.DataFrame:
+    """Metadata for a 9 x 9 grid of NO2 sites (about +-2.2 km) around every zone."""
+    rows = []
+    for zone_id, zone in BOUNDARIES.items():
+        for i, dlat in enumerate(np.linspace(-0.02, 0.02, 9)):
+            for j, dlon in enumerate(np.linspace(-0.035, 0.035, 9)):
+                rows.append(
+                    {
+                        "network": "LMAM",
+                        "site_id": f"{zone_id.upper()}_{i}{j}",
+                        "latitude": zone.centroid.y + dlat,
+                        "longitude": zone.centroid.x + dlon,
+                    }
+                )
+    # The same instrument in two networks, 5 m apart, in the middle of Bath:
+    # only the AURN record (kept) may appear in the view.
+    bath = BOUNDARIES["bath"].representative_point()
+    rows += [
+        {"network": "AURN", "site_id": "DUP", "latitude": bath.y, "longitude": bath.x},
+        {"network": "SAQN", "site_id": "DUPCOPY", "latitude": bath.y + 0.000045,
+         "longitude": bath.x},
+    ]  # fmt: skip
+    df = pd.DataFrame(rows).assign(
+        site_name="test site",
+        location_type="Urban Traffic",
+        parameter="NO2",
+        start_date=pd.Timestamp("2015-01-01"),
+        end_date=pd.NaT,
+    )
+    return df
+
+
+def recreate_test_database(admin: Engine) -> None:
+    # CREATE/DROP DATABASE cannot run inside a transaction, hence AUTOCOMMIT
+    with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {TEST_DB} WITH (FORCE)"))
+        conn.execute(text(f"CREATE DATABASE {TEST_DB}"))
+
+
+@pytest.fixture(scope="module")
+def engine() -> Iterator[Engine]:
+    """A fresh test database, built with the real reference data and the grid sites."""
+    admin = get_engine()
+    recreate_test_database(admin)
+    test_engine = get_engine(TEST_DB)
+    with test_engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION postgis"))
+    database.build_database(test_engine, grid_sites())
+    yield test_engine
+    test_engine.dispose()
+    with admin.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {TEST_DB} WITH (FORCE)"))
+    admin.dispose()
+
+
+def scalar(engine: Engine, sql: str, **params):
+    with engine.connect() as conn:
+        return conn.execute(text(sql), params).scalar_one()
+
+
+def test_all_rows_are_loaded(engine: Engine) -> None:
+    assert scalar(engine, "SELECT count(*) FROM ref.zones") == 11
+    assert scalar(engine, "SELECT count(*) FROM ref.control_cities") == 18
+    assert scalar(engine, "SELECT count(*) FROM ref.zone_boundaries") == 11
+    assert scalar(engine, "SELECT count(*) FROM ref.zones WHERE include") == 9
+    assert scalar(engine, "SELECT count(*) FROM aq.sites") == 11 * 81 + 2
+    assert scalar(engine, "SELECT count(*) FROM aq.site_parameters") == 11 * 81 + 2
+
+
+def test_values_survive_the_round_trip(engine: Engine) -> None:
+    sql = "SELECT charging_start::text || ' ' || class FROM ref.zones WHERE zone_id = 'tyneside'"
+    assert scalar(engine, sql) == "2023-01-30 C"
+    sql = "SELECT exclusion_reason FROM ref.zones WHERE zone_id = 'bristol'"
+    assert scalar(engine, sql) is None
+    sql = "SELECT ST_AsText(centre) FROM ref.control_cities WHERE city_id = 'leeds'"
+    assert scalar(engine, sql) == "POINT(-1.5478 53.7965)"
+    sql = "SELECT canon_network || ' ' || canon_site_id FROM aq.sites WHERE site_id = 'DUPCOPY'"
+    assert scalar(engine, sql) == "AURN DUP"
+    sql = "SELECT end_date FROM aq.site_parameters WHERE site_id = 'DUP'"
+    assert scalar(engine, sql) is None  # still running
+
+
+def test_boundaries_are_stored_exactly(engine: Engine) -> None:
+    # WKB transfer: PostGIS holds the same coordinates as the GeoJSON file
+    with engine.connect() as conn:
+        rows = conn.execute(text("SELECT zone_id, ST_AsBinary(geom) FROM ref.zone_boundaries"))
+        stored = {zone_id: shapely.from_wkb(bytes(wkb)) for zone_id, wkb in rows}
+    for zone_id, geometry in BOUNDARIES.items():
+        # same vertices in the same order, to the last bit (tolerance 0)
+        assert stored[zone_id].equals_exact(r._as_multipolygon(geometry), tolerance=0)
+
+
+def test_excluded_zone_without_reason_is_refused_by_the_database(engine: Engine) -> None:
+    with pytest.raises(sqlalchemy.exc.IntegrityError), engine.begin() as conn:
+        conn.execute(text("UPDATE ref.zones SET exclusion_reason = NULL WHERE zone_id = 'bath'"))
+
+
+def test_site_pointing_to_a_missing_instrument_is_refused_at_commit(engine: Engine) -> None:
+    with pytest.raises(sqlalchemy.exc.IntegrityError), engine.begin() as conn:
+        conn.execute(text("UPDATE aq.sites SET canon_site_id = 'NOPE' WHERE site_id = 'DUPCOPY'"))
+
+
+def test_failed_build_leaves_the_previous_database(engine: Engine, monkeypatch) -> None:
+    # Break the last step (views): schemas were already dropped and every table
+    # refilled, so only a rollback can leave the old tables and view in place.
+    def broken_views(conn, folder):
+        if folder.name == "views":
+            conn.exec_driver_sql("SELECT * FROM no_such_table")
+        return run_sql_files(conn, folder)
+
+    run_sql_files = database.run_sql_files
+    monkeypatch.setattr(database, "run_sql_files", broken_views)
+    with pytest.raises(sqlalchemy.exc.ProgrammingError):
+        database.build_database(engine, grid_sites().head(3))
+    assert scalar(engine, "SELECT count(*) FROM aq.sites") == 11 * 81 + 2
+    assert scalar(engine, "SELECT count(*) FROM aq.site_zone_location") > 0
+
+
+def test_view_labels_agree_with_python(engine: Engine) -> None:
+    """Every grid site: same inside / edge / outside label and distance as caz.boundaries.
+
+    PostGIS measures on the ellipsoid, Python on a sphere (about 0.2% apart), so
+    sites within 0.5% of a threshold (1000 m, 5000 m) are not compared.
+    """
+    with engine.connect() as conn:
+        view = pd.read_sql("SELECT * FROM aq.site_zone_location", conn)
+        sites = pd.read_sql(
+            "SELECT network, site_id, ST_Y(geom) AS lat, ST_X(geom) AS lon FROM aq.sites", conn
+        )
+    view = view.set_index(["network", "site_id", "zone_id"])
+    compared = 0
+    for site in sites.itertuples():
+        for zone_id, zone in BOUNDARIES.items():
+            label, d = locate(site.lat, site.lon, zone)
+            near_threshold = any(abs(d - t) < 0.005 * t for t in (EDGE_M, VIEW_LIMIT_M))
+            key = (site.network, site.site_id, zone_id)
+            if near_threshold or site.site_id == "DUPCOPY":
+                continue
+            if d > VIEW_LIMIT_M:
+                assert key not in view.index, key
+                continue
+            row = view.loc[key]
+            assert row["zone_location"] == label, key
+            # 1 m for ellipsoid vs sphere, + 0.5 m because the view rounds to whole metres
+            assert row["distance_to_zone_m"] == pytest.approx(d, rel=0.005, abs=1.5), key
+            compared += 1
+    assert compared > 800
+    labels = view["zone_location"].value_counts()
+    assert min(labels.get(k, 0) for k in ("inside", "edge", "outside")) > 50  # all exercised
+
+
+def test_copies_of_an_instrument_are_left_out_of_the_view(engine: Engine) -> None:
+    sql = "SELECT count(*) FROM aq.site_zone_location WHERE site_id = :s"
+    assert scalar(engine, sql, s="DUP") == 1  # Bath only
+    assert scalar(engine, sql, s="DUPCOPY") == 0

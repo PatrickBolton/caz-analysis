@@ -1,11 +1,12 @@
 """Connecting to the project database (the Postgres container in compose.yaml).
 
 Settings come from environment variables, normally loaded from .env by uv:
-    uv run --env-file .env python scripts/load_reference.py
+    uv run --env-file .env python scripts/build_database.py
 """
 
 import os
 
+import pandas as pd
 from sqlalchemy import URL, Engine, create_engine
 
 REQUIRED = ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD")
@@ -32,3 +33,13 @@ def database_url(dbname: str | None = None) -> URL:
 def get_engine(dbname: str | None = None) -> Engine:
     """A connection pool to the database. Use `with engine.begin() as conn:` for a transaction."""
     return create_engine(database_url(dbname))
+
+
+def records(df: pd.DataFrame) -> list[dict]:
+    """Rows as dicts for SQL parameters: dates as date, missing values as None."""
+    out = df.copy()
+    for column in out.columns:
+        if pd.api.types.is_datetime64_any_dtype(out[column]):
+            out[column] = out[column].dt.date
+    out = out.astype(object).where(out.notna(), None)
+    return out.to_dict("records")

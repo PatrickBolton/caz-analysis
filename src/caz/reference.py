@@ -2,8 +2,9 @@
 
 The files in data/reference/ are hand-made or built by scripts, so each is checked
 against a pandera schema before it is written to the database. The database
-tables (sql/schema/reference.sql) repeat the key rules as constraints, so a bad
-row is stopped even if it bypasses this module.
+tables (sql/schema/01_reference.sql) repeat the key rules as constraints, so a bad
+row is stopped even if it bypasses this module. The database is built by
+caz.database.build_database.
 """
 
 import json
@@ -14,11 +15,12 @@ import pandera.pandas as pa
 import shapely
 from shapely.geometry import MultiPolygon, shape
 from shapely.geometry.base import BaseGeometry
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, text
+
+from caz.db import records
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFERENCE_DIR = REPO_ROOT / "data" / "reference"
-SCHEMA_SQL = REPO_ROOT / "sql" / "schema" / "reference.sql"
 
 GB_LAT = (49.8, 60.9)  # rough bounding box for Great Britain
 GB_LON = (-8.7, 1.8)
@@ -166,16 +168,6 @@ def read_zone_boundaries(
     return df
 
 
-def _records(df: pd.DataFrame) -> list[dict]:
-    """Rows as dicts for SQL parameters: dates as date, missing values as None."""
-    out = df.copy()
-    for column in out.columns:
-        if pd.api.types.is_datetime64_any_dtype(out[column]):
-            out[column] = out[column].dt.date
-    out = out.astype(object).where(out.notna(), None)
-    return out.to_dict("records")
-
-
 INSERT_ZONES = text("""
     INSERT INTO ref.zones (
         zone_id, city, country, scheme_type, class, charging_start, decision_date,
@@ -206,28 +198,23 @@ INSERT_BOUNDARIES = text("""
 """)
 
 
-def load_reference(engine: Engine, reference_dir: Path = REFERENCE_DIR) -> dict[str, int]:
-    """Validate the reference files and (re)build the ref.* tables from them.
-
-    Everything runs in one transaction: if any step fails, the database is left
-    as it was. Returns the number of rows loaded per table.
-    """
+def read_reference(reference_dir: Path = REFERENCE_DIR) -> dict[str, pd.DataFrame]:
+    """The three reference files, validated: {"zones", "control_cities", "zone_boundaries"}."""
     zones = read_zones(reference_dir / "zones.csv")
-    controls = read_control_cities(reference_dir / "control_cities.csv")
-    boundaries = read_zone_boundaries(
-        reference_dir / "zone_boundaries.geojson", zone_ids=zones["zone_id"]
-    )
+    return {
+        "zones": zones,
+        "control_cities": read_control_cities(reference_dir / "control_cities.csv"),
+        "zone_boundaries": read_zone_boundaries(
+            reference_dir / "zone_boundaries.geojson", zone_ids=zones["zone_id"]
+        ),
+    }
+
+
+def insert_reference(conn: Connection, reference: dict[str, pd.DataFrame]) -> None:
+    """Insert validated reference tables (from read_reference) into the ref.* tables."""
+    boundaries = reference["zone_boundaries"].copy()
     # WKB (binary) keeps every coordinate exactly; hex so it travels as text
     wkb = shapely.to_wkb(boundaries.pop("geometry").to_numpy(), hex=True)
-    boundaries = boundaries.assign(wkb=wkb)
-
-    with engine.begin() as conn:
-        conn.exec_driver_sql(SCHEMA_SQL.read_text())
-        conn.execute(INSERT_ZONES, _records(zones))
-        conn.execute(INSERT_CONTROL_CITIES, _records(controls))
-        conn.execute(INSERT_BOUNDARIES, _records(boundaries))
-    return {
-        "zones": len(zones),
-        "control_cities": len(controls),
-        "zone_boundaries": len(boundaries),
-    }
+    conn.execute(INSERT_ZONES, records(reference["zones"]))
+    conn.execute(INSERT_CONTROL_CITIES, records(reference["control_cities"]))
+    conn.execute(INSERT_BOUNDARIES, records(boundaries.assign(wkb=wkb)))

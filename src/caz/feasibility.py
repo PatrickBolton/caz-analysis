@@ -65,19 +65,16 @@ def no2_sites(metadata: pd.DataFrame) -> pd.DataFrame:
     return sites
 
 
-def merge_duplicate_sites(
-    sites: pd.DataFrame, network_priority: list[str]
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Merge sites that are the same instrument listed in several networks.
+def duplicate_mapping(sites: pd.DataFrame, network_priority: list[str]) -> pd.DataFrame:
+    """Map every site to the instrument it is a copy of (itself, if it is not a copy).
 
     Two sites in *different* networks within DUPLICATE_SITE_KM are treated as one
     instrument, even if their codes differ (e.g. Aberdeen Union Street is ABD7 in
     AURN and ABD3 in SAQN). The highest-priority network's record is kept; if
     several kept records are within range, the copy joins the nearest one.
 
-    Returns (kept_sites, mapping) where mapping has columns network, site_id,
-    canon_network, canon_site_id and covers every input site, so annual data from
-    all copies can be pooled under the kept record.
+    `sites` needs network, site_id, latitude, longitude. Returns network, site_id,
+    canon_network, canon_site_id for every input site.
     """
     rank = {name: i for i, name in enumerate(network_priority)}
     ordered = sites.assign(_rank=sites["network"].map(rank)).sort_values("_rank", kind="stable")
@@ -107,8 +104,25 @@ def merge_duplicate_sites(
                 "canon_site_id": canon["site_id"],
             }
         )
-    mapping_df = pd.DataFrame(mapping)
-    kept_sites = pd.DataFrame(kept).drop(columns="_rank").reset_index(drop=True)
+    return pd.DataFrame(mapping)
+
+
+def merge_duplicate_sites(
+    sites: pd.DataFrame, network_priority: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Merge NO2 sites that are the same instrument listed in several networks.
+
+    See duplicate_mapping for the rule. Returns (kept_sites, mapping): the kept
+    records, with the NO2 measurement period extended to cover all their copies,
+    and the mapping, so annual data from all copies can be pooled under the kept
+    record.
+    """
+    mapping_df = duplicate_mapping(sites, network_priority)
+    is_kept = (mapping_df["network"] == mapping_df["canon_network"]) & (
+        mapping_df["site_id"] == mapping_df["canon_site_id"]
+    )
+    kept_keys = mapping_df.loc[is_kept, ["network", "site_id"]]
+    kept_sites = kept_keys.merge(sites, on=["network", "site_id"]).reset_index(drop=True)
     # Measurement period of a merged site = union over all its copies.
     periods = (
         sites.merge(mapping_df, on=["network", "site_id"])

@@ -8,6 +8,7 @@ import pandera.errors
 import pytest
 
 from caz import reference as r
+from caz.db import records
 
 
 def test_committed_reference_files_are_valid() -> None:
@@ -60,16 +61,19 @@ def test_boundary_for_an_unknown_zone_is_rejected() -> None:
 
 def test_records_turn_missing_values_into_none_and_dates_into_dates() -> None:
     zones = r.read_zones()
-    record = r._records(zones)[zones.index[zones["zone_id"] == "tyneside"][0]]
+    record = records(zones)[zones.index[zones["zone_id"] == "tyneside"][0]]
     assert record["exclusion_reason"] is None
     assert str(record["charging_start"]) == "2023-01-30"
 
 
-def test_load_reference_validates_before_touching_the_database(tmp_path: Path) -> None:
-    # A bad file must fail validation before any connection is made: the engine
-    # here is a placeholder that would raise a different error if used.
+def test_read_reference_validates_all_three_files(tmp_path: Path) -> None:
     for name in ("zones.csv", "control_cities.csv", "zone_boundaries.geojson"):
         shutil.copy(r.REFERENCE_DIR / name, tmp_path / name)
+    assert {k: len(v) for k, v in r.read_reference(tmp_path).items()} == {
+        "zones": 11,
+        "control_cities": 18,
+        "zone_boundaries": 11,
+    }
     edited_zones(tmp_path, **{"class": "E"})
     with pytest.raises(pandera.errors.SchemaError):
-        r.load_reference(engine=None, reference_dir=tmp_path)  # type: ignore[arg-type]
+        r.read_reference(tmp_path)

@@ -31,7 +31,7 @@ uv run pytest                             # tests
 cp .env.example .env                      # then set POSTGRES_PASSWORD in .env
 docker compose up -d --wait               # Postgres 18 + PostGIS + pgvector on localhost:5432
 docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < docker/db/check.sql
-uv run --env-file .env python scripts/load_reference.py   # zones, control cities, boundaries -> ref.* tables
+uv run --env-file .env python scripts/build_database.py   # reference tables, monitoring sites, views
 uv run --env-file .env pytest -m db       # database tests (in a throwaway caz_test database)
 docker compose down                       # stop (data is kept in a Docker volume; add -v to delete it)
 ```

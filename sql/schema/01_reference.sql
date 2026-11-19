@@ -1,8 +1,9 @@
 -- Reference tables: the zones (treatment), control cities, and zone boundaries.
 --
 -- These are small and fully defined by files in data/reference/, so they are
--- rebuilt from scratch on every load (scripts/load_reference.py), inside one
--- transaction: a failed load leaves the previous tables untouched.
+-- rebuilt from scratch on every build (scripts/build_database.py), inside one
+-- transaction: a failed build leaves the previous tables untouched. Dropping the
+-- schema also drops views that use it; the build recreates them (sql/views/).
 -- Coordinates are WGS84 longitude/latitude (EPSG:4326), as in the source files.
 
 DROP SCHEMA IF EXISTS ref CASCADE;
