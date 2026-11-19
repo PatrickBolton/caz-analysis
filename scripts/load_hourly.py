@@ -22,6 +22,7 @@ import pandas as pd
 import pandera.errors
 from sqlalchemy import text
 
+from caz.database import panel_summary, refresh_panels
 from caz.db import get_engine
 from caz.hourly import FileContentError, load_site_year, read_site_year, record_outcome
 from caz.openair import NETWORKS, DownloadError, NotFoundOnServerError, download, site_year_url
@@ -90,6 +91,11 @@ def main() -> None:
             time.sleep(PAUSE_S)
         if i % 50 == 0 or i == len(todo):
             print(f"  {i}/{len(todo)}  {dict(outcomes)}")
+
+    if outcomes["loaded"]:
+        print("Refreshing the stored panels ...")
+        refresh_panels(engine)
+        print(panel_summary(engine))
 
     with engine.connect() as conn:
         print("\nobs.hourly_loads:")

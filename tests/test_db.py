@@ -239,3 +239,86 @@ def test_study_site_years_lists_included_zones_and_copies(engine: Engine) -> Non
 def test_rows_outside_the_year_are_refused(engine: Engine) -> None:
     with pytest.raises(ValueError, match="outside 2022"):
         hourly.load_site_year(engine, "AURN", "DUP", 2022, hourly_frame(5), "https://x")
+
+
+def day_hours(day: str, values: dict[int, float]) -> pd.DataFrame:
+    """Hourly rows for one UTC day: {hour: no2}."""
+    start = pd.Timestamp(day, tz="UTC")
+    times = [start + pd.Timedelta(hours=h) for h in values]
+    frame = pd.DataFrame({"measured_at": pd.DatetimeIndex(times).astype("datetime64[ns, UTC]")})
+    return frame.assign(
+        no2=list(values.values()), pm25=float("nan"), ws=float("nan"), wd=float("nan"),
+        air_temp=float("nan"),
+    )  # fmt: skip
+
+
+def test_cleaning_rules_and_pooling(engine: Engine) -> None:
+    """Week of Monday 1 March 2021 at DUP (AURN), with its copy DUPCOPY (SAQN).
+
+    Mon: DUP has hours 0-17 (10); the copy also has 18-23 (40) -> pooled 24 hours,
+         mean (18*10 + 6*40) / 24 = 17.5
+    Tue: 18 hours of 20, but one is -10 -> removed (rule 1) -> 17 hours -> no daily
+         value (rule 2)
+    Wed-Sat: 24 hours of 30 -> 4 valid days
+    Week: 5 valid days -> mean (17.5 + 4*30) / 5 = 27.5 (rule 3)
+    Next week: 4 valid days only -> no weekly value
+    """
+    dup = pd.concat(
+        [
+            day_hours("2021-03-01", dict.fromkeys(range(18), 10.0)),
+            day_hours("2021-03-02", {0: -10.0} | dict.fromkeys(range(1, 18), 20.0)),
+            *[day_hours(f"2021-03-0{d}", dict.fromkeys(range(24), 30.0)) for d in range(3, 7)],
+            *[day_hours(f"2021-03-{d:02d}", dict.fromkeys(range(24), 30.0)) for d in range(8, 12)],
+        ],
+        ignore_index=True,
+    )
+    copy = day_hours("2021-03-01", {h: 10.0 if h < 18 else 40.0 for h in range(24)})
+    hourly.load_site_year(engine, "AURN", "DUP", 2021, dup, "https://x")
+    hourly.load_site_year(engine, "SAQN", "DUPCOPY", 2021, copy, "https://x")
+    database.refresh_panels(engine)
+
+    with engine.connect() as conn:
+        daily = pd.read_sql(
+            "SELECT day::text, no2_hours, no2 FROM panel.site_daily "
+            "WHERE site_id = 'DUP' AND day < '2021-03-08' ORDER BY day",
+            conn,
+        ).set_index("day")
+        weekly = pd.read_sql(
+            "SELECT week_start::text, valid_days, no2 FROM panel.site_weekly "
+            "WHERE site_id = 'DUP' AND week_start >= '2021-03-01' ORDER BY week_start",
+            conn,
+        ).set_index("week_start")
+    assert "DUPCOPY" not in daily.index  # copies are pooled into the kept record
+    assert daily.loc["2021-03-01", "no2_hours"] == 24
+    assert daily.loc["2021-03-01", "no2"] == pytest.approx(17.5)
+    assert daily.loc["2021-03-02", "no2_hours"] == 17
+    assert pd.isna(daily.loc["2021-03-02", "no2"])
+    assert weekly.loc["2021-03-01", "valid_days"] == 5
+    assert weekly.loc["2021-03-01", "no2"] == pytest.approx(27.5)
+    assert weekly.loc["2021-03-08", "valid_days"] == 4
+    assert pd.isna(weekly.loc["2021-03-08", "no2"])
+    summary = database.panel_summary(engine)
+    assert summary["removed_below_minus_5"] == 1
+    assert summary["no2_hours_from_copies"] == 6
+
+
+def test_area_panel_averages_instruments_by_location(engine: Engine) -> None:
+    # The grid site at Bristol's centroid is inside the zone (Bristol is included)
+    week = pd.concat(
+        [day_hours(f"2021-03-0{d}", dict.fromkeys(range(24), 25.0)) for d in range(1, 6)],
+        ignore_index=True,
+    )
+    hourly.load_site_year(engine, "LMAM", "BRISTOL_44", 2021, week, "https://x")
+    database.refresh_panels(engine)
+    sql = """SELECT location || ' ' || n_sites || ' ' || round(no2::numeric, 1)
+             FROM panel.area_weekly WHERE area_id = 'bristol' AND week_start = '2021-03-01'"""
+    assert scalar(engine, sql) == "inside 1 25.0"
+
+
+def test_build_gives_up_when_another_session_holds_the_tables(engine, monkeypatch) -> None:
+    monkeypatch.setattr(database, "LOCK_TIMEOUT", "1s")
+    with engine.connect() as other:  # like a table left open in VS Code
+        other.execute(text("SELECT 1 FROM ref.zones LIMIT 1"))  # transaction stays open
+        with pytest.raises(database.DatabaseBusyError, match="another session"):
+            database.build_database(engine, grid_sites())
+        other.rollback()

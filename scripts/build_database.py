@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from caz.database import build_database
+from caz.database import build_database, panel_summary
 from caz.db import get_engine
 from caz.openair import NETWORKS, DownloadError, download, metadata_url, read_metadata
 
@@ -83,6 +83,10 @@ def main() -> None:
     print("\nNO2 instruments within 5 km of each zone boundary (all years, usable or not):")
     print(table[["inside", "edge", "outside"]].to_string())
     compare_with_feasibility(engine)
+
+    print("\nPanels (cleaning rules in sql/views/04_panels.sql):")
+    for name, value in panel_summary(engine).items():
+        print(f"  {name:24s} {value:>10,}")
 
 
 if __name__ == "__main__":
