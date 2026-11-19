@@ -13,7 +13,11 @@ Since 2021, seven English cities have introduced charging Clean Air Zones (CAZs)
 4. For a city considering a zone, what NO2 reduction should it expect, with what uncertainty, and at what cost?
 
 ## Earlier studies
-- **Birmingham:** Liu et al. (2023, *Environmental and Resource Economics*) found modest first-year NO2 reductions using weather normalisation and synthetic control. As a check on this pipeline, their design was repeated at the two of their sites in the national network (A4540 ring road, Ladywood). The estimates have the same sign and lie within each other's 95% intervals, but are 0.4-0.8 µg/m³ larger reductions (e.g. A4540, first 7 months: -1.29 vs -0.84 µg/m³). One of their control sites (Portsmouth) started its own zone during their study period.
+- **Birmingham:** Liu et al. (2023, *Environmental and Resource Economics*) found modest first-year NO2 reductions using weather normalisation and synthetic control. As a check on this pipeline, their design was repeated at the two of their sites in the national network (A4540 ring road, Ladywood). The point estimates have the same sign and are 0.4-0.8 µg/m³ larger reductions (e.g. A4540, first 7 months: -1.29 vs -0.84 µg/m³). Robustness checks show how fragile such single-site estimates are:
+  - The A4540 result depends on one control site (Luton): -0.1 to -4.4 µg/m³ depending on the donors and the specification.
+  - Placebo tests at sites without a zone give 'effects' as large as Birmingham's.
+  - Neither site's effect is statistically significant, which agrees with the paper's own intervals.
+  - One of their control sites (Portsmouth) started its own zone during their study period.
 - **Sheffield** (Williams et al. 2025): no significant effect; **Glasgow** (Shin et al. 2024): reductions; both with one or two monitors.
 - **No causal studies found** for Portsmouth, Tyneside, Edinburgh, Aberdeen or Dundee.
 
@@ -27,12 +31,11 @@ Open data (DEFRA air quality, council zone boundaries, DfT traffic counts) → P
   - Cleaning rules: hourly NO2 below -5 µg/m³ is treated as missing; a day needs 18 of 24 hours; a week needs 5 of 7 valid days.
 - **Weather normalisation.** Per monitor, a random forest predicts hourly NO2 from time and weather (ERA5 reanalysis). Repeating the prediction with the weather resampled gives NO2 "under average weather", so a windy month is not mistaken for a policy effect.
 - **Counterfactual.** Ridge-augmented synthetic control: a weighted mix of monitors in cities without a zone that tracks the treated monitor before the zone, giving what NO2 would have been without it.
-  - 95% intervals by jackknife+.
+  - Uncertainty from placebo tests: the same analysis at sites without a zone. On real data, interval methods that worked in simulation proved far too narrow (see the Birmingham check).
   - Control cities must be at least 15 km from any zone and not treated during the study period.
 - **Checks before results.**
   - Simulation tests with a known injected effect: in 100 runs the 95% intervals contained the true effect 93% of the time.
-  - The published Birmingham study, repeated with this pipeline.
-  - Placebo tests.
+  - The published Birmingham study, repeated with this pipeline, with leave-one-control-out, placebo-site and placebo-date checks.
 - **Still to come:** staggered difference-in-differences across all zones, the effect by year since launch, anticipation (from the council's decision date), and Bayesian pooling of zones with few monitors.
 
 ## Running locally
@@ -48,6 +51,7 @@ uv run --env-file .env python scripts/build_database.py   # reference tables, mo
 uv run --env-file .env python scripts/load_hourly.py      # hourly NO2, PM2.5, weather (~300 MB; resumable)
 uv run --env-file .env python scripts/check_hourly.py     # loaded data vs openair's annual statistics
 uv run --env-file .env python scripts/replicate_liu2023.py  # Birmingham check against Liu et al. (2023)
+uv run --env-file .env python scripts/robustness_liu2023.py # its robustness checks
 uv run --env-file .env pytest -m db       # database tests (in a throwaway caz_test database)
 docker compose down                       # stop (data is kept in a Docker volume; add -v to delete it)
 ```

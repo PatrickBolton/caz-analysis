@@ -23,26 +23,20 @@ Steps, as in the paper:
 """
 
 import argparse
-import datetime as dt
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from caz import synth
 from caz.db import get_engine
-from caz.deweather import normalise, weekly_means
-from caz.weather import VARIABLES, era5_table, fetch_era5
-
-ROOT = Path(__file__).resolve().parents[1]
-ERA5_CACHE = ROOT / "data" / "raw" / "era5"
-OUT = ROOT / "data" / "processed" / "replication_liu2023"
-START, END = dt.date(2021, 1, 1), dt.date(2022, 5, 31)  # p. 207
-TREATMENT_WEEK = pd.Timestamp("2021-05-24")  # p. 210: effects began the week before 1 June
-SEVEN_MONTHS_END = pd.Timestamp("2021-12-31")
-MIN_WEEK_HOURS = 0.75 * 168
-MAX_DONOR_GAP_WEEKS = 4  # donor gaps up to this long are interpolated; longer: donor dropped
+from caz.replication import (
+    OUT,
+    PAPER_WINDOW,
+    deweathered,
+    estimate,
+    replication_sites,
+    weekly_panel,
+)
 
 # Liu et al. (2023), Table 1, p. 213: NO2, absolute change ug/m3 (95% interval), percent change
 PAPER = {
@@ -54,82 +48,6 @@ PAPER = {
 # Donors whose own city started a charging zone inside the post-period
 TREATED_DONORS = {"POAR": "Portsmouth CAZ charging from 29 Nov 2021"}
 
-SITES = """
-    SELECT r.site_id, r.role, r.site_class, r.paper_name, ST_Y(s.geom) AS lat, ST_X(s.geom) AS lon
-    FROM ref.replication_sites r
-    JOIN aq.sites s USING (network, site_id)
-    WHERE r.study = 'liu2023'
-    ORDER BY r.role DESC, r.site_class, r.site_id
-"""
-HOURLY = """
-    SELECT measured_at, no2 AS value FROM obs.hourly
-    WHERE network = 'AURN' AND site_id = %(site_id)s
-      AND measured_at >= %(start)s AND measured_at < %(end)s
-    ORDER BY measured_at
-"""
-
-
-def deweathered(engine, site: pd.Series, refresh: bool) -> pd.DataFrame:
-    """Hourly observed and weather-normalised NO2 for one site (cached as CSV)."""
-    cache = OUT / "deweathered" / f"{site.site_id}.csv"
-    if cache.exists() and not refresh:
-        return pd.read_csv(cache, parse_dates=["measured_at"])
-    params = {"site_id": site.site_id, "start": START, "end": END + dt.timedelta(days=1)}
-    with engine.connect() as conn:
-        no2 = pd.read_sql(HOURLY, conn, params=params)
-    no2["measured_at"] = no2["measured_at"].dt.tz_convert("UTC")
-    era5_file = ERA5_CACHE / f"AURN_{site.site_id}_{START}_{END}.json"
-    weather = era5_table(fetch_era5(site.lat, site.lon, START, END, era5_file), START, END)
-    result = normalise(no2.merge(weather, on="measured_at", how="left"), list(VARIABLES.values()))
-    out = result.hourly.assign(r2_oob=result.r2_oob)
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    out.to_csv(cache, index=False)
-    return out
-
-
-def weekly_panel(hourly: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """Weeks x sites of weather-normalised NO2; weeks with < 75% of hours are missing."""
-    columns = {}
-    for site_id, h in hourly.items():
-        weekly = weekly_means(h, ["normalised"]).set_index("week_start")
-        counts = (
-            h["measured_at"]
-            .dt.tz_convert("UTC")
-            .dt.tz_localize(None)
-            .dt.to_period("W-SUN")
-            .dt.start_time.value_counts()
-        )  # fmt: skip  (hours with a normalised value, per week)
-        columns[site_id] = weekly["normalised"].where(
-            counts.reindex(weekly.index) >= MIN_WEEK_HOURS
-        )
-    panel = pd.DataFrame(columns).sort_index()
-    # complete weeks only: 1 Jan 2021 is a Friday, 31 May 2022 a Tuesday
-    first_full_week, last_full_week = pd.Timestamp("2021-01-04"), pd.Timestamp("2022-05-23")
-    return panel.loc[first_full_week:last_full_week]
-
-
-def estimate(panel: pd.DataFrame, treated: str, donors: list[str]) -> dict:
-    """Ridge ASCM for one treated site; effects over the paper's two post windows."""
-    # Donors: fill short gaps by linear interpolation (weekly weather-normalised
-    # series are smooth); drop donors with a longer gap or missing first/last weeks.
-    filled, _ = synth.fill_donor_gaps(panel[donors], max_gap=MAX_DONOR_GAP_WEEKS)
-    usable = list(filled.columns)
-    # Treated site: never filled; only the weeks it has
-    weeks = panel.index[panel[treated].notna()]
-    y1 = panel.loc[weeks, treated].to_numpy()
-    y0 = filled.loc[weeks, usable].to_numpy().T
-    t0 = int((weeks < TREATMENT_WEEK).sum())
-    result = synth.fit(y1, y0, t0)
-    post = weeks >= TREATMENT_WEEK
-    windows = {"7 months": post & (weeks <= SEVEN_MONTHS_END), "1 year": post}
-    return {
-        "result": result,
-        "weeks": weeks,
-        "donors_used": usable,
-        "donors_dropped": sorted(set(donors) - set(usable)),
-        "effects": {name: synth.average_effect(result, y1, w) for name, w in windows.items()},
-    }
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -137,16 +55,15 @@ def main() -> None:
     args = parser.parse_args()
 
     engine = get_engine()
-    with engine.connect() as conn:
-        sites = pd.read_sql(SITES, conn)
+    sites = replication_sites(engine)
     hourly = {}
     for i, site in enumerate(sites.itertuples(index=False), start=1):
         started = time.monotonic()
-        hourly[site.site_id] = deweathered(engine, site, args.refresh)
+        hourly[site.site_id] = deweathered(engine, site, PAPER_WINDOW, refresh=args.refresh)
         r2 = hourly[site.site_id]["r2_oob"].iloc[0]
         print(f"  {i:2d}/{len(sites)} {site.site_id:5s} {site.paper_name:32s} OOB R2 {r2:.2f}"
               f"  ({time.monotonic() - started:.0f} s)")  # fmt: skip
-    panel = weekly_panel(hourly)
+    panel = weekly_panel(hourly, PAPER_WINDOW)
     panel.to_csv(OUT / "weekly_normalised.csv")
 
     runs = {
@@ -157,13 +74,12 @@ def main() -> None:
     rows = []
     for name, (treated, site_class, exclude) in runs.items():
         is_donor = (sites["role"] == "donor") & (sites["site_class"] == site_class)
-        donors = sites.loc[is_donor, "site_id"]
-        run = estimate(panel, treated, [d for d in donors if d not in exclude])
+        donors = [d for d in sites.loc[is_donor, "site_id"] if d not in exclude]
+        run = estimate(panel, treated, donors, PAPER_WINDOW)
         r = run["result"]
-        pre_rmse = float(np.sqrt(np.mean(r.gap[: r.t0] ** 2)))
         print(f"\n{name}: {len(run['weeks'])} weeks ({r.t0} before treatment), "
               f"{len(run['donors_used'])} donors, lambda {r.lam:.3g}, "
-              f"pre-period RMSE {pre_rmse:.2f} ug/m3")  # fmt: skip
+              f"pre-period RMSE {run['pre_rmse']:.2f} ug/m3")  # fmt: skip
         if run["donors_dropped"]:
             print(f"  donors dropped (missing weeks): {', '.join(run['donors_dropped'])}")
         top = np.argsort(-np.abs(r.weights))[:5]

@@ -29,12 +29,13 @@ study AS (
                     AND n.parameter = 'NO2')
 ),
 -- Sites of replicated studies (ref.replication_sites), for the years of each
--- study's window. Liu et al. 2023: 1 Jan 2021 - 31 May 2022 (p. 207).
+-- study's window. Liu et al. 2023: 1 Jan 2021 - 31 May 2022 (p. 207), plus 2019
+-- for the in-time placebo (a fake zone in May 2019, as the paper's Fig. 13).
 replication AS (
     SELECT s.network, s.site_id, s.provider_code, y.year
     FROM ref.replication_sites r
     JOIN aq.sites s USING (network, site_id)
-    CROSS JOIN generate_series(2021, 2022) AS y (year)
+    CROSS JOIN unnest(ARRAY[2019, 2021, 2022]) AS y (year)
     WHERE r.study = 'liu2023'
 )
 SELECT * FROM study

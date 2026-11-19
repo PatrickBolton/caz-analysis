@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import nnls
 
 N_CV_PERIODS = 5  # last pre-treatment periods used to choose lambda
 LAMBDA_GRID_SIZE = 20
@@ -33,30 +33,17 @@ def scm_weights(x1: np.ndarray, x0: np.ndarray) -> np.ndarray:
     """SCM weights: argmin ||x1 - x0' w||^2 subject to w >= 0, sum(w) = 1.
 
     x1: (T0,) treated pre-treatment outcomes; x0: (J, T0) donors'.
+    Solved exactly with non-negative least squares (an active-set method, no
+    iteration limit to hit); the sum-to-one condition is an extra equation with
+    a weight so large that it holds to ~1e-9, then the weights are rescaled.
     """
-    n_donors = x0.shape[0]
-
-    def loss(w: np.ndarray) -> float:
-        r = x1 - x0.T @ w
-        return float(r @ r)
-
-    def grad(w: np.ndarray) -> np.ndarray:
-        return -2 * x0 @ (x1 - x0.T @ w)
-
-    result = minimize(
-        loss,
-        np.full(n_donors, 1 / n_donors),
-        jac=grad,
-        bounds=[(0, 1)] * n_donors,
-        constraints=[
-            {"type": "eq", "fun": lambda w: w.sum() - 1, "jac": lambda w: np.ones_like(w)}
-        ],
-        method="SLSQP",
-        options={"maxiter": 1000, "ftol": 1e-12},
-    )
-    if not result.success:
-        raise RuntimeError(f"SCM weights did not converge: {result.message}")
-    w = np.clip(result.x, 0, None)
+    a = x0.T  # (T0, J)
+    big = 1e4 * max(float(np.abs(a).max()), 1.0)
+    a_aug = np.vstack([a, np.full((1, a.shape[1]), big)])
+    b_aug = np.append(x1, big)
+    w, _ = nnls(a_aug, b_aug, maxiter=50 * a.shape[1])
+    if w.sum() <= 0:
+        raise RuntimeError("SCM weights: no feasible solution")
     return w / w.sum()
 
 
