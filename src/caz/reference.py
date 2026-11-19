@@ -123,6 +123,22 @@ BOUNDARIES_SCHEMA = pa.DataFrameSchema(
 )
 
 
+REPLICATION_SITES_SCHEMA = pa.DataFrameSchema(
+    {
+        "study": _text(checks=pa.Check.str_matches(r"^[a-z]+[0-9]{4}$")),
+        "site_id": _text(),
+        "network": _text(checks=pa.Check.isin(["AURN", "AQE", "SAQN", "LMAM"])),
+        "role": _text(checks=pa.Check.isin(["treated", "donor"])),
+        "site_class": _text(checks=pa.Check.isin(["roadside", "background"])),
+        "paper_name": _text(),
+        "paper_location": _text(),
+        "source": _text(),
+    },
+    unique=["study", "network", "site_id"],
+    strict=True,
+)
+
+
 def _read_csv(path: Path, date_columns: list[str]) -> pd.DataFrame:
     df = pd.read_csv(path)
     for column in date_columns:  # strict: a date in any other format is an error
@@ -198,10 +214,29 @@ INSERT_BOUNDARIES = text("""
 """)
 
 
+def read_replication_sites(reference_dir: Path = REFERENCE_DIR) -> pd.DataFrame:
+    """All replication_<study>.csv files as one validated table, with a study column."""
+    parts = [
+        pd.read_csv(path).assign(study=path.stem.removeprefix("replication_"))
+        for path in sorted(reference_dir.glob("replication_*.csv"))
+    ]
+    df = pd.concat(parts, ignore_index=True).astype("string")
+    return REPLICATION_SITES_SCHEMA.validate(df[list(REPLICATION_SITES_SCHEMA.columns)])
+
+
+INSERT_REPLICATION_SITES = text("""
+    INSERT INTO ref.replication_sites (
+        study, network, site_id, role, site_class, paper_name, paper_location, source)
+    VALUES (
+        :study, :network, :site_id, :role, :site_class, :paper_name, :paper_location, :source)
+""")
+
+
 def read_reference(reference_dir: Path = REFERENCE_DIR) -> dict[str, pd.DataFrame]:
-    """The three reference files, validated: {"zones", "control_cities", "zone_boundaries"}."""
+    """The reference files, validated: zones, control cities, boundaries, replication sites."""
     zones = read_zones(reference_dir / "zones.csv")
     return {
+        "replication_sites": read_replication_sites(reference_dir),
         "zones": zones,
         "control_cities": read_control_cities(reference_dir / "control_cities.csv"),
         "zone_boundaries": read_zone_boundaries(
@@ -218,3 +253,4 @@ def insert_reference(conn: Connection, reference: dict[str, pd.DataFrame]) -> No
     conn.execute(INSERT_ZONES, records(reference["zones"]))
     conn.execute(INSERT_CONTROL_CITIES, records(reference["control_cities"]))
     conn.execute(INSERT_BOUNDARIES, records(boundaries.assign(wkb=wkb)))
+    conn.execute(INSERT_REPLICATION_SITES, records(reference["replication_sites"]))

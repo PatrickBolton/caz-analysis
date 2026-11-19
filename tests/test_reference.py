@@ -66,10 +66,20 @@ def test_records_turn_missing_values_into_none_and_dates_into_dates() -> None:
     assert str(record["charging_start"]) == "2023-01-30"
 
 
-def test_read_reference_validates_all_three_files(tmp_path: Path) -> None:
-    for name in ("zones.csv", "control_cities.csv", "zone_boundaries.geojson"):
-        shutil.copy(r.REFERENCE_DIR / name, tmp_path / name)
+def copy_reference(tmp_path: Path) -> None:
+    for name in (
+        "zones.csv",
+        "control_cities.csv",
+        "zone_boundaries.geojson",
+        "replication_liu2023.csv",
+    ):
+        shutil.copy(r.REFERENCE_DIR / name, tmp_path / name)  # fmt: skip
+
+
+def test_read_reference_validates_all_files(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
     assert {k: len(v) for k, v in r.read_reference(tmp_path).items()} == {
+        "replication_sites": 32,
         "zones": 11,
         "control_cities": 18,
         "zone_boundaries": 11,
@@ -77,3 +87,21 @@ def test_read_reference_validates_all_three_files(tmp_path: Path) -> None:
     edited_zones(tmp_path, **{"class": "E"})
     with pytest.raises(pandera.errors.SchemaError):
         r.read_reference(tmp_path)
+
+
+def test_replication_sites_from_the_paper() -> None:
+    sites = r.read_replication_sites()
+    assert set(sites["study"]) == {"liu2023"}
+    assert sites["role"].value_counts().to_dict() == {"donor": 30, "treated": 2}
+    donors = sites[sites["role"] == "donor"]
+    assert donors["site_class"].value_counts().to_dict() == {"roadside": 15, "background": 15}
+
+
+def test_bad_replication_row_is_rejected(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+    path = tmp_path / "replication_liu2023.csv"
+    sites = pd.read_csv(path, dtype=str)
+    sites.loc[0, "role"] = "control"  # not 'treated' or 'donor'
+    sites.to_csv(path, index=False)
+    with pytest.raises(pandera.errors.SchemaError):
+        r.read_replication_sites(tmp_path)

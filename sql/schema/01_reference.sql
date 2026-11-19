@@ -53,3 +53,16 @@ CREATE TABLE ref.control_cities (
     CHECK (include = (exclusion_reason IS NULL)),
     CHECK (include = (role <> 'excluded'))
 );
+
+-- Sites used by published studies we replicate (data/reference/replication_<study>.csv).
+CREATE TABLE ref.replication_sites (
+    study          text NOT NULL,  -- e.g. 'liu2023'
+    network        text NOT NULL,
+    site_id        text NOT NULL,
+    role           text NOT NULL CHECK (role IN ('treated', 'donor')),
+    site_class     text NOT NULL CHECK (site_class IN ('roadside', 'background')),
+    paper_name     text NOT NULL,
+    paper_location text NOT NULL,  -- the paper's in/out label, as written
+    source         text NOT NULL,  -- table and page in the paper
+    PRIMARY KEY (study, network, site_id)
+);

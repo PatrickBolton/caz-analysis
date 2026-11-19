@@ -94,6 +94,7 @@ def test_all_rows_are_loaded(engine: Engine) -> None:
     assert scalar(engine, "SELECT count(*) FROM ref.control_cities") == 18
     assert scalar(engine, "SELECT count(*) FROM ref.zone_boundaries") == 11
     assert scalar(engine, "SELECT count(*) FROM ref.zones WHERE include") == 9
+    assert scalar(engine, "SELECT count(*) FROM ref.replication_sites") == 32
     assert scalar(engine, "SELECT count(*) FROM aq.sites") == 11 * 81 + 2
     assert scalar(engine, "SELECT count(*) FROM aq.site_parameters") == 11 * 81 + 2
 
