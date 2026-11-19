@@ -18,8 +18,10 @@ def metadata(rows: list[dict]) -> pd.DataFrame:
         "parameter": "NO2",
         "start_date": "2015-01-01",
         "end_date": None,
+        "provider_code": None,  # LMAM only
     }
     df = pd.DataFrame([defaults | row for row in rows])
+    df["provider_code"] = df["provider_code"].astype("string")
     df["start_date"] = pd.to_datetime(df["start_date"])
     df["end_date"] = pd.to_datetime(df["end_date"])
     return df
@@ -88,3 +90,10 @@ def test_period_ending_before_it_starts_is_rejected() -> None:
     meta = metadata([{"site_id": "X", "start_date": "2020-01-01", "end_date": "2019-01-01"}])
     with pytest.raises(pandera.errors.SchemaError):
         site_tables(meta)
+
+
+def test_lmam_sites_need_a_provider_code() -> None:
+    with pytest.raises(pandera.errors.SchemaError):
+        site_tables(metadata([{"network": "LMAM", "site_id": "X"}]))
+    sites = site_tables(metadata([{"network": "LMAM", "site_id": "X", "provider_code": "aqdm"}]))[0]
+    assert sites.loc[0, "provider_code"] == "aqdm"

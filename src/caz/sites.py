@@ -18,7 +18,7 @@ from caz.feasibility import SITE_CLASSES, duplicate_mapping, site_class
 from caz.openair import NETWORKS
 
 UNKNOWN_LOCATION_TYPE = "unknown unknown"  # openair's value when the type is not recorded
-SITE_COLUMNS = ["site_name", "location_type", "latitude", "longitude"]
+SITE_COLUMNS = ["site_name", "location_type", "latitude", "longitude", "provider_code"]
 # British Isles: the AURN includes Mace Head, on the west coast of Ireland
 LAT_RANGE = (49.5, 61.0)
 LON_RANGE = (-11.0, 2.0)
@@ -32,9 +32,14 @@ SITES_SCHEMA = pa.DataFrameSchema(
         "site_class": pa.Column("string", pa.Check.isin([*set(SITE_CLASSES.values()), "other"])),
         "latitude": pa.Column(float, pa.Check.in_range(*LAT_RANGE)),
         "longitude": pa.Column(float, pa.Check.in_range(*LON_RANGE)),
+        "provider_code": pa.Column("string", nullable=True),
         "canon_network": pa.Column("string"),
         "canon_site_id": pa.Column("string"),
     },
+    checks=pa.Check(
+        lambda s: (s["network"] == "LMAM") == s["provider_code"].notna(),
+        error="LMAM sites, and only they, have a provider code",
+    ),
     unique=["network", "site_id"],
     strict=True,
 )
@@ -95,11 +100,11 @@ def site_tables(metadata: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 INSERT_SITES = text("""
     INSERT INTO aq.sites (
-        network, site_id, site_name, location_type, site_class, geom,
+        network, site_id, site_name, location_type, site_class, geom, provider_code,
         canon_network, canon_site_id)
     VALUES (
         :network, :site_id, :site_name, :location_type, :site_class,
-        ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326),
+        ST_SetSRID(ST_MakePoint(:longitude, :latitude), 4326), :provider_code,
         :canon_network, :canon_site_id)
 """)
 

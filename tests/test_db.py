@@ -16,7 +16,7 @@ import shapely
 import sqlalchemy.exc
 from sqlalchemy import Engine, text
 
-from caz import database
+from caz import database, hourly
 from caz import reference as r
 from caz.boundaries import EDGE_M, locate, read_boundaries
 from caz.db import get_engine
@@ -52,10 +52,12 @@ def grid_sites() -> pd.DataFrame:
     df = pd.DataFrame(rows).assign(
         site_name="test site",
         location_type="Urban Traffic",
+        provider_code=lambda d: (d["network"] == "LMAM").map({True: "test", False: None}),
         parameter="NO2",
         start_date=pd.Timestamp("2015-01-01"),
         end_date=pd.NaT,
     )
+    df["provider_code"] = df["provider_code"].astype("string")
     return df
 
 
@@ -182,3 +184,58 @@ def test_copies_of_an_instrument_are_left_out_of_the_view(engine: Engine) -> Non
     sql = "SELECT count(*) FROM aq.site_zone_location WHERE site_id = :s"
     assert scalar(engine, sql, s="DUP") == 1  # Bath only
     assert scalar(engine, sql, s="DUPCOPY") == 0
+
+
+def hourly_frame(n: int, no2: float = 30.0, year: int = 2023) -> pd.DataFrame:
+    """n hours of validated hourly data from 1 January of `year`, 00:00 UTC."""
+    times = pd.date_range(f"{year}-01-01", periods=n, freq="h", tz="UTC")
+    times = times.astype("datetime64[ns, UTC]")
+    return pd.DataFrame(
+        {"measured_at": times, "no2": no2, "pm25": float("nan"), "ws": 2.0, "wd": 180.0,
+         "air_temp": 5.0}
+    )  # fmt: skip
+
+
+def test_loading_a_site_year_twice_replaces_it(engine: Engine) -> None:
+    hourly.load_site_year(engine, "AURN", "DUP", 2023, hourly_frame(48), "https://x/DUP_2023")
+    hourly.load_site_year(engine, "AURN", "DUP", 2023, hourly_frame(24, no2=50.0), "https://x")
+    sql = "SELECT count(*) FROM obs.hourly WHERE site_id = 'DUP'"
+    assert scalar(engine, sql) == 24
+    assert scalar(engine, "SELECT avg(no2) FROM obs.hourly WHERE site_id = 'DUP'") == 50.0
+    sql = "SELECT concat_ws(' ', status, n_hours, n_no2) FROM obs.hourly_loads WHERE year = 2023"
+    assert scalar(engine, sql) == "loaded 24 24"
+    sql = "SELECT measured_at::text FROM obs.hourly WHERE site_id = 'DUP' ORDER BY 1 LIMIT 1"
+    with engine.connect() as conn:
+        conn.execute(text("SET TIME ZONE 'UTC'"))
+        assert conn.execute(text(sql)).scalar_one() == "2023-01-01 00:00:00+00"
+
+
+def test_not_found_is_recorded_and_clears_the_year(engine: Engine) -> None:
+    hourly.load_site_year(engine, "AURN", "DUP", 2023, hourly_frame(5), "https://x")
+    hourly.record_outcome(engine, "AURN", "DUP", 2023, "not_found", "https://x", "HTTP 404")
+    assert scalar(engine, "SELECT status FROM obs.hourly_loads WHERE year = 2023") == "not_found"
+    sql = "SELECT count(*) FROM obs.hourly WHERE site_id = 'DUP' AND measured_at >= '2023-01-01'"
+    assert scalar(engine, sql) == 0
+
+
+def test_rebuild_keeps_the_hourly_data(engine: Engine) -> None:
+    hourly.load_site_year(engine, "AURN", "DUP", 2024, hourly_frame(10, year=2024), "https://x")
+    before = scalar(engine, "SELECT count(*) FROM obs.hourly")
+    database.build_database(engine, grid_sites())  # drops and recreates ref and aq
+    assert scalar(engine, "SELECT count(*) FROM obs.hourly") == before > 0
+    assert scalar(engine, "SELECT count(*) FROM obs.hourly_loads") > 0
+
+
+def test_study_site_years_lists_included_zones_and_copies(engine: Engine) -> None:
+    with engine.connect() as conn:
+        years = pd.read_sql("SELECT * FROM aq.study_site_years", conn)
+    # Bath is excluded, so its grid sites are not needed; Bristol's are
+    assert not years["site_id"].str.startswith("BATH_").any()
+    assert years["site_id"].str.startswith("BRISTOL_").any()
+    assert years["year"].min() == 2015  # grid sites start in 2015 (data from 2010 on)
+    assert years.query("site_id.str.startswith('BRISTOL_')")["provider_code"].eq("test").all()
+
+
+def test_rows_outside_the_year_are_refused(engine: Engine) -> None:
+    with pytest.raises(ValueError, match="outside 2022"):
+        hourly.load_site_year(engine, "AURN", "DUP", 2022, hourly_frame(5), "https://x")

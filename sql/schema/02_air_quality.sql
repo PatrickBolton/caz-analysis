@@ -13,12 +13,14 @@ CREATE TABLE aq.sites (
     site_class    text NOT NULL
         CHECK (site_class IN ('roadside', 'background', 'industrial', 'rural', 'other')),
     geom          geometry(Point, 4326) NOT NULL,
+    provider_code text,  -- LMAM only: data provider, whose subfolder holds the files
     -- The instrument this record belongs to. A site listed in two networks
     -- (within 10 m) is one instrument; the copy points to the kept record, and a
     -- kept record points to itself. See caz.feasibility.duplicate_mapping.
     canon_network text NOT NULL,
     canon_site_id text NOT NULL,
     PRIMARY KEY (network, site_id),
+    CHECK ((network = 'LMAM') = (provider_code IS NOT NULL)),
     -- checked at commit, so rows can be inserted in any order
     FOREIGN KEY (canon_network, canon_site_id) REFERENCES aq.sites (network, site_id)
         DEFERRABLE INITIALLY DEFERRED
