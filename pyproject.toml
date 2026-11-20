@@ -3,6 +3,8 @@ name = "caz"
 version = "0.1.0"
 description = "Causal impact of England's Clean Air Zones on NO2, and a decision tool for cities considering one."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Patrick Bolton", email = "patrick.d.bolton@gmail.com" }
 ]
